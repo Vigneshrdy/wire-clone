@@ -1,0 +1,58 @@
+# Local prototype stack. Deliberately small: redis, the API, and one detection
+# worker. ClickHouse is NOT here -- the store is SQLite for the prototype (see
+# docs/ARCHITECTURE.md, "Storage"), so adding a database container would buy
+# nothing but startup time.
+services:
+  redis:
+    image: redis:7-alpine
+    # Streams are the event fabric, not a cache: no eviction, and AOF so a restart
+    # does not lose unacked entries.
+    command: >
+      redis-server --appendonly yes --maxmemory-policy noeviction
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    # Loopback only: there is no authentication yet (docs/SECURITY_MODEL.md).
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      SIH_REDIS__URL: redis://redis:6379/0
+    volumes:
+      - app-data:/app/data
+      - ./ml_artifacts:/app/ml_artifacts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker-detection:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["sih-ntd", "worker", "--consumer", "worker-1"]
+    environment:
+      SIH_REDIS__URL: redis://redis:6379/0
+      SIH_REDIS__CONSUMER_NAME: worker-1
+    volumes:
+      # Same SQLite file as the API, in WAL mode: the worker writes, the API reads.
+      - app-data:/app/data
+      - ./ml_artifacts:/app/ml_artifacts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  app-data:

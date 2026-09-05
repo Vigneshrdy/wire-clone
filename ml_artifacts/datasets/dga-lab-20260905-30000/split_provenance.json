@@ -1,0 +1,26 @@
+{
+  "train": [
+    "uniform",
+    "hex",
+    "alphanum",
+    "consonant",
+    "base32"
+  ],
+  "validation": [
+    "uniform",
+    "hex",
+    "alphanum",
+    "consonant",
+    "base32"
+  ],
+  "test": [
+    "uniform",
+    "hex",
+    "alphanum",
+    "consonant",
+    "base32"
+  ],
+  "unseen_family": [
+    "dictionary"
+  ]
+}

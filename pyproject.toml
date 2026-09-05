@@ -1,0 +1,41 @@
+[project]
+name = "sih-ntd"
+version = "0.1.0"
+description = "SIH 26145 — passive AI-based cyber threat detection for unidirectional IP traffic"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "redis>=5.0",
+    "numpy>=1.26",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
+]
+
+[project.scripts]
+sih-ntd = "sih_ntd.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sih_ntd"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "redis: requires a running redis-server",
+    "slow: long-running (training / benchmarks)",
+]
+asyncio_mode = "auto"

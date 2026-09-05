@@ -1,0 +1,34 @@
+# --- agent continuity state: LOCAL ONLY, never commit ---
+.ai-project-state.md
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# secrets / local config
+.env
+.env.local
+
+# runtime artifacts
+data/*.db
+data/*.sqlite
+data/pcap/*.pcap
+data/pcap/*.pcapng
+var/
+logs/
+*.log
+
+# ml artifacts: registry + dataset METADATA is committed (it is the audit trail),
+# model binaries and dataset rows are not.
+ml_artifacts/**/*.joblib
+ml_artifacts/**/*.bin
+ml_artifacts/datasets/**/*.csv
+
+# zeek output
+zeek_logs/

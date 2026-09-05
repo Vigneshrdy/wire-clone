@@ -1,0 +1,45 @@
+{
+  "dataset_id": "dga-lab-20260905-30000",
+  "created_at": "2026-09-05T05:02:15.624316Z",
+  "feature_schema_version": "1.0.0",
+  "detector": "dga",
+  "source_summary": {
+    "synthetic_benign": 12000,
+    "synthetic_dga": 18000,
+    "dga_families_trained": 5,
+    "dga_families_held_out": 1
+  },
+  "class_distribution": {
+    "dga": 18000,
+    "benign": 12000
+  },
+  "split_strategy": "stratified 70/15/15 within each of 5 DGA families (uniform, hex, alphanum, consonant, base32) and benign names; family 'dictionary' excluded from training and scored separately as unseen_family",
+  "split_sizes": {
+    "train": 18900,
+    "validation": 4050,
+    "test": 4050,
+    "unseen_family": 4800
+  },
+  "feature_names": [
+    "dns_domain_length",
+    "dns_label_count",
+    "dns_longest_label_length",
+    "dns_subdomain_depth",
+    "dns_payload_length",
+    "dns_suffix_length",
+    "dns_char_entropy",
+    "dns_digit_ratio",
+    "dns_vowel_ratio",
+    "dns_unique_char_ratio",
+    "dns_hex_ratio",
+    "dns_longest_consonant_run",
+    "dns_hyphen_count",
+    "dns_digit_present"
+  ],
+  "label_provenance": {
+    "lab_generated": 30000
+  },
+  "content_hash": "a0856a04425806c9598c073d2d0646281e86522f9a3134ebee23c01dc31c6707",
+  "row_count": 30000,
+  "seed": 20260905
+}
