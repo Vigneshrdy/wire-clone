@@ -53,7 +53,7 @@ Re-measure on your own hardware; nothing here is extrapolated. See
 
 ```bash
 uv sync                                        # Python 3.12 venv
-redis-server &                                 # or: docker compose up -d redis
+redis-server &                                 
 
 # 1. In-process demo: synthetic traffic straight through the pipeline
 uv run sih-ntd synth --scenario mixed --count 3000
@@ -82,8 +82,8 @@ system says so instead of claiming the traffic was abnormal *for that host*.
 ## Tests
 
 ```bash
-uv run pytest                    # 190 tests, ~57 s
-uv run pytest -m "not redis"     # skip tests needing a live redis
+uv run pytest                    
+uv run pytest -m "not redis"     
 ```
 
 Includes a false-positive budget test: 3 000 benign synthetic flows must produce
