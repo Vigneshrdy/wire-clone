@@ -52,7 +52,7 @@ Re-measure on your own hardware; nothing here is extrapolated. See
 
 ```bash
 uv sync                                        # Python 3.12 venv
-redis-server &                                 # or: docker compose up -d redis
+redis-server &                                 
 
 # 1. In-process demo: synthetic traffic straight through the pipeline
 uv run sih-ntd synth --scenario mixed --count 3000
