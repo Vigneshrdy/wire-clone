@@ -1,4 +1,4 @@
-# Local prototype stack. Deliberately small: redis, the API, and one detection
+# Local prototype stack: Redis, API, detection worker, and analyst console.
 # worker. ClickHouse is NOT here -- the store is SQLite for the prototype (see
 # docs/ARCHITECTURE.md, "Storage"), so adding a database container would buy
 # nothing but startup time.
@@ -50,6 +50,19 @@ services:
       - ./ml_artifacts:/app/ml_artifacts:ro
     depends_on:
       redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      FASTAPI_BASE_URL: http://api:8000
+    depends_on:
+      api:
         condition: service_healthy
     restart: unless-stopped
 

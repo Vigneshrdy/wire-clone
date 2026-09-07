@@ -8,10 +8,9 @@ explainable alerts, and exposes everything over a versioned REST + WebSocket API
 > Observe passively. Detect continuously. Explain every alert. Learn safely.
 > Never modify production from untrusted traffic.
 
-**Backend only.** No frontend is included — that is deliberate and scoped for
-later. Every artefact a dashboard needs (alerts with evidence, incidents, flows,
-detector states, model registry, drift signals, benchmarks, a live alert socket)
-is already served as JSON.
+The FastAPI backend serves versioned JSON and WebSocket APIs. A separate Next.js
+App Router console in `frontend/` provides the analyst workspace at port 3000 and
+uses strict same-origin BFF routes to reach FastAPI.
 
 ## What works today
 
@@ -65,7 +64,18 @@ uv run sih-ntd worker --idle-exit
 # 3. Serve it
 uv run sih-ntd api                             # http://127.0.0.1:8000/docs
 curl -s localhost:8000/api/v1/alerts | jq '.alerts[0].evidence'
+
+# 4. Run the analyst console in another terminal
+cd frontend && npm ci && npm run dev            # http://127.0.0.1:3000
 ```
+
+To run the full local stack instead, use `docker compose up --build` and open
+`http://127.0.0.1:3000`.
+
+Mutating management routes (`POST /feedback`, `/replay/start`, alert status, and
+model lifecycle actions) are local-only by default. If binding the API beyond
+loopback, set `SIH_API__ADMIN_TOKEN` and send it as `Authorization: Bearer ...` or
+`X-API-Key`.
 
 A real alert, as served:
 
@@ -82,8 +92,8 @@ system says so instead of claiming the traffic was abnormal *for that host*.
 ## Tests
 
 ```bash
-uv run pytest                    
-uv run pytest -m "not redis"     
+uv run pytest                    # 210 tests
+uv run pytest -m "not redis"     # skip tests needing a live redis
 ```
 
 Includes a false-positive budget test: 3 000 benign synthetic flows must produce

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,15 @@ from ..schemas import (
     ModelStatus,
     PromotionRecord,
 )
+
+_SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def validate_registry_component(value: str, field: str) -> str:
+    """Reject path separators and traversal in registry-controlled names."""
+    if not _SAFE_COMPONENT.fullmatch(value):
+        raise ValueError(f"invalid {field}: {value!r}")
+    return value
 
 
 def sha256_file(path: Path) -> str:
@@ -67,18 +77,22 @@ class ModelRegistry:
         with no models does not litter the tree with empty directories -- which made
         an unavailable detector show up in ``GET /api/v1/models``.
         """
+        detector = validate_registry_component(detector, "detector")
         path = self.root / detector / "models"
         if create:
             path.mkdir(parents=True, exist_ok=True)
         return path
 
     def metadata_path(self, detector: str, model_version: str, *, create: bool = False) -> Path:
+        model_version = validate_registry_component(model_version, "model_version")
         return self.detector_dir(detector, create=create) / f"{model_version}.json"
 
     def artifact_path(self, detector: str, model_version: str, *, create: bool = False) -> Path:
+        model_version = validate_registry_component(model_version, "model_version")
         return self.detector_dir(detector, create=create) / f"{model_version}.joblib"
 
     def promotions_path(self, detector: str) -> Path:
+        detector = validate_registry_component(detector, "detector")
         return self.root / detector / "promotions.jsonl"
 
     # --- registration ----------------------------------------------------
@@ -187,13 +201,23 @@ class ModelRegistry:
     # --- loading ---------------------------------------------------------
     def load(self, metadata: ModelMetadata) -> Any:
         """Load an artefact after verifying integrity and feature compatibility."""
+        validate_registry_component(metadata.detector, "detector")
+        validate_registry_component(metadata.model_version, "model_version")
         if metadata.feature_schema_version != FEATURE_SCHEMA_VERSION:
             raise SchemaVersionMismatch(
                 f"{metadata.model_id} was trained against feature schema "
                 f"{metadata.feature_schema_version}; this build runs "
                 f"{FEATURE_SCHEMA_VERSION}. Retrain before use."
             )
-        artifact = self.root / metadata.artifact_path
+        artifact = (self.root / metadata.artifact_path).resolve()
+        root = self.root.resolve()
+        try:
+            artifact.relative_to(root)
+        except ValueError as exc:
+            raise ArtifactIntegrityError("artifact path escapes registry root") from exc
+        expected = self.artifact_path(metadata.detector, metadata.model_version).resolve()
+        if artifact != expected:
+            raise ArtifactIntegrityError("artifact path does not match detector/model version")
         if not artifact.exists():
             raise ArtifactIntegrityError(f"artifact missing: {artifact}")
         actual = sha256_file(artifact)

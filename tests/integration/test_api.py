@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from sih_ntd.api import app, get_state
+from sih_ntd.api import app
+from sih_ntd.config import get_settings
 from sih_ntd.sensor.synthetic import generate
 from tests.conftest import syn_flood_events
 
@@ -144,3 +145,31 @@ def test_incidents_endpoint(client):
     body = client.get("/api/v1/incidents").json()
     assert "incidents" in body
     assert client.get("/api/v1/incidents/missing").status_code == 404
+
+
+def test_management_routes_are_disabled_without_token_when_bound_off_loopback(monkeypatch):
+    monkeypatch.setenv("SIH_API__HOST", "0.0.0.0")
+    monkeypatch.delenv("SIH_API__ADMIN_TOKEN", raising=False)
+    get_settings.cache_clear()
+    with TestClient(app) as local_client:
+        response = local_client.post("/api/v1/replay/start", json={"scenario": "benign"})
+    assert response.status_code == 503
+    assert "management API disabled" in response.json()["detail"]
+
+
+def test_management_routes_require_configured_token(monkeypatch):
+    monkeypatch.setenv("SIH_API__ADMIN_TOKEN", "0123456789abcdef")
+    get_settings.cache_clear()
+    with TestClient(app) as local_client:
+        assert local_client.post("/api/v1/replay/start", json={"scenario": "benign"}).status_code == 401
+        assert local_client.post(
+            "/api/v1/replay/start",
+            json={"scenario": "benign"},
+            headers={"X-API-Key": "wrong-wrong-wrong"},
+        ).status_code == 403
+        accepted = local_client.post(
+            "/api/v1/replay/start",
+            json={"scenario": "benign", "count": 1},
+            headers={"Authorization": "Bearer 0123456789abcdef"},
+        )
+    assert accepted.status_code == 202

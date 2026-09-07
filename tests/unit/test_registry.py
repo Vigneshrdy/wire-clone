@@ -99,6 +99,41 @@ def test_registry_lists_only_detectors_with_models(registry, estimator):
     assert registry.summary()["dga"]["model_count"] == 1
 
 
+@pytest.mark.parametrize("detector", ["../dga", "dga/../../x", "dga;touch-pwned"])
+def test_registry_rejects_detector_path_traversal(registry, estimator, detector):
+    with pytest.raises(ValueError, match="invalid detector"):
+        registry.register(
+            detector=detector, model_version="v1", estimator=estimator,
+            feature_names=["x"], metrics={}, dataset_id="ds-1",
+        )
+
+
+@pytest.mark.parametrize("version", ["../v1", "v1/../../x", "$(id)"])
+def test_registry_rejects_model_version_path_traversal(registry, estimator, version):
+    with pytest.raises(ValueError, match="invalid model_version"):
+        registry.register(
+            detector="dga", model_version=version, estimator=estimator,
+            feature_names=["x"], metrics={}, dataset_id="ds-1",
+        )
+
+
+def test_registry_refuses_metadata_artifact_paths_outside_root(registry, estimator):
+    metadata = register(registry, estimator, "v1")
+    escaped = metadata.model_copy(update={"artifact_path": "../evil.joblib"})
+    with pytest.raises(ArtifactIntegrityError, match="escapes registry root"):
+        registry.load(escaped)
+
+
+def test_registry_refuses_metadata_artifact_paths_for_the_wrong_model(registry, estimator):
+    first = register(registry, estimator, "v1")
+    second = register(registry, estimator, "v2")
+    mismatched = second.model_copy(
+        update={"artifact_path": first.artifact_path, "artifact_hash": first.artifact_hash}
+    )
+    with pytest.raises(ArtifactIntegrityError, match="does not match"):
+        registry.load(mismatched)
+
+
 def test_gate_passes_a_sound_candidate(registry, estimator):
     assert PromotionGate().evaluate(register(registry, estimator, "v1")).passed
 

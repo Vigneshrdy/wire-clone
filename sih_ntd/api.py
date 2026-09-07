@@ -1,26 +1,24 @@
-"""FastAPI backend: versioned REST + WebSocket. No frontend (out of scope).
+"""FastAPI backend: versioned REST and WebSocket services.
 
-Everything a dashboard will need is exposed as JSON: alerts with full evidence,
+Everything the analyst console needs is exposed as JSON: alerts with full evidence,
 incidents, flows, detector states, model registry contents, drift signals,
-benchmark results, and a live alert WebSocket. Adding a UI later requires no
-change here.
+benchmark results, and a live alert WebSocket.
 
-Security posture (see docs/SECURITY_MODEL.md): the prototype binds to loopback and
-has **no authentication**. Every route is read-only except ``POST /feedback``,
-``POST /replay/start`` and the model lifecycle routes. Before this is exposed
-beyond localhost it needs an auth layer -- the mutating routes can promote a model
-and start a replay job.
+Security posture (see docs/SECURITY_MODEL.md): mutating management routes require
+``SIH_API__ADMIN_TOKEN`` when the API is bound off-loopback, and require it on
+loopback too when configured. Read-only routes remain unauthenticated.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import platform
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -88,6 +86,42 @@ app = FastAPI(
 )
 StateDep = Annotated[AppState, Depends(get_state)]
 PREFIX = "/api/v1"
+
+
+def _loopback_bind(host: str) -> bool:
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def require_management_access(
+    state: StateDep,
+    authorization: Annotated[str | None, Header()] = None,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> None:
+    """Guard mutating management routes without breaking local-only demos.
+
+    If an admin token is configured, callers must present it as either
+    ``Authorization: Bearer <token>`` or ``X-API-Key``. If no token is configured,
+    management writes are refused unless the API is bound to loopback.
+    """
+    token = state.settings.api.admin_token
+    if token is None:
+        if _loopback_bind(state.settings.api.host):
+            return
+        raise HTTPException(
+            status_code=503,
+            detail="management API disabled without SIH_API__ADMIN_TOKEN on non-loopback bind",
+        )
+
+    supplied = x_api_key
+    if authorization and authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+    if not supplied:
+        raise HTTPException(status_code=401, detail="management token required")
+    if not hmac.compare_digest(supplied, token):
+        raise HTTPException(status_code=403, detail="invalid management token")
+
+
+ManagementDep = Annotated[None, Depends(require_management_access)]
 
 
 # --- health / observability -----------------------------------------------
@@ -192,7 +226,9 @@ class StatusUpdate(BaseModel):
 
 
 @app.post(f"{PREFIX}/alerts/{{alert_id}}/status", tags=["alerts"])
-def set_alert_status(alert_id: str, update: StatusUpdate, state: StateDep) -> dict[str, Any]:
+def set_alert_status(
+    alert_id: str, update: StatusUpdate, state: StateDep, _auth: ManagementDep
+) -> dict[str, Any]:
     if not state.store.set_alert_status(alert_id, update.status, update.actor):
         raise HTTPException(status_code=404, detail="alert not found")
     return {"alert_id": alert_id, "status": update.status}
@@ -288,6 +324,7 @@ def model_health(state: StateDep) -> dict[str, Any]:
 def evaluate_model(
     detector: str,
     state: StateDep,
+    _auth: ManagementDep,
     model_version: str | None = None,
 ) -> dict[str, Any]:
     """Run the governance gates against a candidate. Never changes any status."""
@@ -323,7 +360,9 @@ class PromoteRequest(BaseModel):
 
 
 @app.post(f"{PREFIX}/models/{{detector}}/promote", tags=["models"])
-def promote_model(detector: str, request: PromoteRequest, state: StateDep) -> dict[str, Any]:
+def promote_model(
+    detector: str, request: PromoteRequest, state: StateDep, _auth: ManagementDep
+) -> dict[str, Any]:
     """Explicit promotion. Gates must pass (or be explicitly acknowledged).
 
     Nothing else in the system calls this: drift signals, training runs and shadow
@@ -370,7 +409,9 @@ class RollbackRequest(BaseModel):
 
 
 @app.post(f"{PREFIX}/models/{{detector}}/rollback", tags=["models"])
-def rollback_model(detector: str, request: RollbackRequest, state: StateDep) -> dict[str, Any]:
+def rollback_model(
+    detector: str, request: RollbackRequest, state: StateDep, _auth: ManagementDep
+) -> dict[str, Any]:
     try:
         restored = state.registry.rollback(detector, actor=request.actor, reason=request.reason)
     except FileNotFoundError as exc:
@@ -394,7 +435,7 @@ def list_drift(
 
 
 @app.post(f"{PREFIX}/feedback", status_code=201, tags=["ml"])
-def submit_feedback(feedback: AnalystFeedback, state: StateDep) -> dict[str, Any]:
+def submit_feedback(feedback: AnalystFeedback, state: StateDep, _auth: ManagementDep) -> dict[str, Any]:
     """Record an analyst judgement as a *training candidate*.
 
     This does not change any model, threshold or alert verdict. It is stored, and a
@@ -440,7 +481,7 @@ class ReplayRequest(BaseModel):
 
 
 @app.post(f"{PREFIX}/replay/start", status_code=202, tags=["replay"])
-async def start_replay(request: ReplayRequest, state: StateDep) -> dict[str, Any]:
+async def start_replay(request: ReplayRequest, state: StateDep, _auth: ManagementDep) -> dict[str, Any]:
     """Start a synthetic or PCAP replay in the background.
 
     Replay is read-only with respect to the monitored network: it either reads a

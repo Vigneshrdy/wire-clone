@@ -10,7 +10,11 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-
+frontend/node_modules/
+frontend/.next/
+frontend/test-results/
+frontend/playwright-report/
+frontend/tsconfig.tsbuildinfo
 # secrets / local config
 .env
 .env.local

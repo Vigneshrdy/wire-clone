@@ -107,3 +107,32 @@ def test_worker_dead_letters_an_invalid_event(settings, store):
     assert stats.rejected == 1
     assert client.stream_info(Streams.dlq(Streams.NORMALIZED))["length"] >= 1
     client.delete_stream(Streams.NORMALIZED)
+
+
+def test_worker_survives_the_stream_being_deleted(stream):
+    """A retention wipe, an operator DEL, or a restarted Redis must not kill a worker.
+
+    Regression test: deleting the stream destroys the consumer group, and
+    XREADGROUP then raises NOGROUP. That used to propagate out of read() and take
+    the worker process down with exit code 1.
+    """
+    client, name = stream
+    client.ensure_group(name)
+    client.publish(name, {"n": 1})
+    assert client.read(name, block_ms=100)
+
+    client.raw.delete(name)                      # group is destroyed with the key
+    assert client.read(name, block_ms=100) == [], "must recover, not raise"
+
+    # Group was recreated, so the next publish is consumable.
+    client.publish(name, {"n": 2})
+    assert [p["n"] for _, p in client.read(name, block_ms=200)] == [2]
+
+
+def test_ack_after_the_group_disappears_is_not_fatal(stream):
+    client, name = stream
+    client.ensure_group(name)
+    client.publish(name, {"n": 1})
+    batch = client.read(name, block_ms=100)
+    client.raw.delete(name)
+    assert client.ack(name, [mid for mid, _ in batch]) == 0

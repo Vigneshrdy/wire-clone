@@ -204,3 +204,27 @@ def test_replay_never_builds_a_shell_command_from_a_filename():
             assert keyword.arg != "shell", "subprocess must never be called with shell="
         if isinstance(node.func, ast.Attribute) and node.func.attr == "run" and node.args:
             assert isinstance(node.args[0], ast.List), "argv must be a list literal"
+
+
+@pytest.mark.parametrize("hostile", ["../../etc/passwd", "file.pcap;touch-pwned", "$(id).pcap", "`id`.pcap"])
+def test_pcap_replay_rejects_paths_outside_configured_capture_dir(tmp_path, hostile):
+    from sih_ntd.config import Settings
+    from sih_ntd.errors import ConfigError
+    from sih_ntd.sensor.replay import validate_pcap_path
+
+    settings = Settings(sensor={"pcap_dir": tmp_path / "pcaps"})
+    with pytest.raises(ConfigError):
+        validate_pcap_path(hostile, settings)
+
+
+def test_pcap_replay_accepts_only_configured_capture_files(tmp_path):
+    from sih_ntd.config import Settings
+    from sih_ntd.sensor.replay import validate_pcap_path
+
+    pcap_dir = tmp_path / "pcaps"
+    pcap_dir.mkdir()
+    capture = pcap_dir / "capture.pcap"
+    capture.write_bytes(b"not a real pcap; path validation only")
+
+    settings = Settings(sensor={"pcap_dir": pcap_dir})
+    assert validate_pcap_path("capture.pcap", settings) == capture.resolve()

@@ -119,8 +119,21 @@ crafted name cannot forge a plausible INFO-level log line.
 ### Subprocess use
 
 Exactly one: `sensor/replay.py` running Zeek. The PCAP path may come from an API
-request, so argv is a list and `shell=` is never passed. Asserted on the AST, not by
-grepping text.
+request, so it must resolve inside `SIH_SENSOR__PCAP_DIR`, have a `.pcap` or
+`.pcapng` suffix, and point at a regular file before Zeek is invoked. Zeek argv is
+a list and `shell=` is never passed. Asserted on the AST, not by grepping text.
+
+### Management API access
+
+Read-only routes remain unauthenticated for local demos. Mutating management routes
+(`POST /feedback`, `POST /replay/start`, alert status updates, and model lifecycle
+actions) are guarded by `require_management_access`:
+
+- if `SIH_API__ADMIN_TOKEN` is configured, callers must supply it as
+  `Authorization: Bearer <token>` or `X-API-Key`
+- if no token is configured, these routes are allowed only while the API is bound
+  to `127.0.0.1`, `::1`, or `localhost`
+- binding to `0.0.0.0` without a token disables these routes with HTTP 503
 
 ---
 
@@ -130,8 +143,8 @@ Stated plainly rather than left for a reviewer to find.
 
 | Gap | Impact | Mitigation today |
 |---|---|---|
-| **No authentication on the API** | anyone who can reach the port can promote a model, start a replay, or read all alerts | binds to `127.0.0.1` by default; `SIH_API__ALLOW_REPLAY_TRIGGER=false` disables replay. **Add auth before exposing it.** |
-| No authorisation / roles | any caller can promote or roll back | promotion is gated and fully audited, but not access-controlled |
+| Read-only API has no authentication | anyone who can reach the port can read alerts/flows | binds to `127.0.0.1` by default; put behind an authenticated reverse proxy before broad exposure |
+| No role-based authorisation | a holder of the admin token can perform any management action | promotion is gated and fully audited, but not role-scoped |
 | No TLS on the API or Redis | plaintext inside the enclave | run behind a reverse proxy; enable Redis TLS |
 | No rate limiting | a client can exhaust the API | reverse proxy |
 | SQLite, single writer | not suitable for multi-host scale-out | documented ClickHouse seam in `store.py` |
@@ -145,5 +158,5 @@ Stated plainly rather than left for a reviewer to find.
   a text grep also matches the prose in `detectors/base.py` that explains the rule)
 - `grep -rn "shell=True\|eval(\|exec(" sih_ntd/` → no hits
 - `grep -rn "pickle.load" sih_ntd/` → no hits (only `joblib.load` behind a hash check)
-- `uv run pytest tests/security -q` → 22 tests pass
+- `uv run pytest tests/security -q` → passes
 - `curl -s localhost:8000/metrics | grep -c '203\.0\.113'` → 0

@@ -1,0 +1,20 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { Activity, Database, Radio, Server } from "lucide-react";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { apiText } from "@/lib/api/client";
+import { metricTotal, parseMetrics } from "@/lib/api/metrics";
+import { queries } from "@/lib/api/queries";
+import { label, number } from "@/lib/format";
+import { OperatorAccess } from "./operator-access";
+
+export function SystemClient() {
+  const health = useQuery({ queryKey: ["health"], queryFn: queries.health, refetchInterval: 15_000 });
+  const ready = useQuery({ queryKey: ["ready"], queryFn: queries.ready, refetchInterval: 15_000 });
+  const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => apiText("metrics"), refetchInterval: 15_000 });
+  const samples = parseMetrics(metrics.data ?? "");
+  const metricRows = [["Events received", "sih_events_received_total"], ["Events rejected", "sih_events_rejected_total"], ["Features generated", "sih_features_generated_total"], ["Detector results", "sih_detector_results_total"], ["Detector errors", "sih_detector_errors_total"], ["Alerts emitted", "sih_alerts_total"], ["Alerts suppressed", "sih_alerts_suppressed_total"], ["Feedback stored", "sih_feedback_total"]];
+  return <div><header className="page-heading"><div><h2>System diagnostics</h2><p>Runtime dependencies, schemas, pipeline counters, and restricted operator access.</p></div><StatusBadge value={ready.data?.status ?? "OFFLINE"} /></header><section className="runtime-rail"><Runtime icon={Server} label="API" value={health.data ? "Operational" : "Offline"} /><Runtime icon={Radio} label="Redis" value={ready.data?.redis ? "Connected" : "Degraded"} /><Runtime icon={Database} label="Store" value={ready.data ? `${number(ready.data.store.counts.alerts, 0)} alerts` : "Unavailable"} /><Runtime icon={Activity} label="Detector mesh" value={`${Object.values(ready.data?.detectors ?? {}).filter((item) => item === "READY").length}/7 ready`} /></section><section className="system-grid"><div className="surface diagnostics-section"><div className="section-heading"><h3>Runtime dependencies</h3><span>15-second refresh</span></div><div className="diagnostic-list"><div><span>FastAPI</span><StatusBadge value={health.data ? "READY" : "OFFLINE"} /></div><div><span>Redis Streams</span><StatusBadge value={ready.data?.redis ? "READY" : "DEGRADED"} /></div><div><span>SQLite store</span><StatusBadge value={ready.data ? "READY" : "OFFLINE"} /></div>{Object.entries(ready.data?.detectors ?? {}).map(([name, state]) => <div key={name}><span>{label(name)}</span><StatusBadge value={state} /></div>)}</div></div><div className="surface diagnostics-section"><div className="section-heading"><h3>Schema contracts</h3><span>Runtime advertised</span></div><div className="schema-grid">{Object.entries(health.data?.schema_versions ?? {}).map(([name, version]) => <div key={name}><span>{label(name)}</span><strong className="mono">v{version}</strong></div>)}</div><div className="section-heading subsection"><h3>Store records</h3></div><div className="schema-grid">{Object.entries(ready.data?.store.counts ?? {}).map(([name, count]) => <div key={name}><span>{label(name)}</span><strong className="mono">{number(count, 0)}</strong></div>)}</div></div></section><section className="surface pipeline-metrics"><div className="section-heading"><h3>Pipeline counters</h3><span>Process-local Prometheus exposition</span></div><div>{metricRows.map(([name, metric]) => <div key={metric}><span>{name}</span><strong className="mono">{number(metricTotal(samples, metric), 0)}</strong></div>)}</div></section><section className="surface operator-section"><div className="section-heading"><div><span className="eyebrow">Restricted operations</span><h3>Operator access</h3></div><span>Session scoped</span></div><OperatorAccess /></section></div>;
+}
+function Runtime({ icon: Icon, label: name, value }: { icon: typeof Server; label: string; value: string }) { return <div><Icon size={16} /><span>{name}</span><strong>{value}</strong></div>; }

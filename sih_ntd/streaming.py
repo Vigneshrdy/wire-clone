@@ -40,6 +40,11 @@ log = get_logger(__name__)
 PAYLOAD_FIELD = "payload"
 
 
+def _is_nogroup(exc: Exception) -> bool:
+    """True for Redis' NOGROUP error (stream or consumer group no longer exists)."""
+    return "NOGROUP" in str(exc)
+
+
 class StreamClient:
     """Thin wrapper over redis-py with the group/ack/DLQ policy baked in."""
 
@@ -129,6 +134,17 @@ class StreamClient:
             )
         except RedisConnectionError as exc:
             raise StreamUnavailable(f"read from {stream} failed: {exc}") from exc
+        except ResponseError as exc:
+            # The stream (and with it the group) can vanish under a running
+            # consumer: a retention wipe, an operator DEL, or a restarted Redis.
+            # That is an operational event, not a fatal one -- recreate the group
+            # and let the next poll continue. Without this, any of the above kills
+            # every worker.
+            if not _is_nogroup(exc):
+                raise
+            log.warning("consumer group missing, recreating", extra={"stream": stream})
+            self.ensure_group(stream, group)
+            return []
         return self._decode(stream, response)
 
     def _decode(self, stream: str, response: Any) -> list[tuple[str, dict[str, Any]]]:
@@ -162,7 +178,11 @@ class StreamClient:
             pending = self._client.xpending_range(
                 stream, group, min="-", max="+", count=count
             )
-        except (ResponseError, RedisConnectionError):
+        except ResponseError as exc:
+            if _is_nogroup(exc):
+                self.ensure_group(stream, group)
+            return []
+        except RedisConnectionError:
             return []
         poison = [
             entry["message_id"]
@@ -187,7 +207,14 @@ class StreamClient:
     def ack(self, stream: str, message_ids: list[str], group: str | None = None) -> int:
         if not message_ids:
             return 0
-        acked = int(self._client.xack(stream, group or self.config.consumer_group, *message_ids))
+        try:
+            acked = int(self._client.xack(stream, group or self.config.consumer_group, *message_ids))
+        except ResponseError as exc:
+            # Group gone (see read()). The entries are gone with it, so there is
+            # nothing left to acknowledge.
+            if not _is_nogroup(exc):
+                raise
+            return 0
         STREAM_MESSAGES.inc(acked, stream=stream, outcome="acked")
         return acked
 

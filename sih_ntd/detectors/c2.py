@@ -109,6 +109,10 @@ class C2BeaconDetector(Detector):
             "destination_rarity": rarity,
             "observed_span": f.get("observed_span"),
             "corroborating_signals": float(len(corroboration)),
+            # Emitted so a reader (and the console) can see what the score was
+            # measured against, not just the score.
+            "periodicity_threshold": t.c2_periodicity_score,
+            "cv_threshold": t.c2_max_cv,
         }
         return self.build_result(
             f,
