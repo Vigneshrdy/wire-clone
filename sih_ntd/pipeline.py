@@ -117,6 +117,7 @@ class Pipeline:
             results.extend(self._shadow(vector))
 
         fusion_started = time.perf_counter()
+        self.fusion.expire(event.epoch)
         outcome = self.fusion.ingest(results)
         FUSION_LATENCY.observe(time.perf_counter() - fusion_started)
         PIPELINE_LATENCY.observe(time.perf_counter() - started)
@@ -162,6 +163,7 @@ class Pipeline:
             batch = self.detectors.evaluate(vector)
             results.extend(batch)
             stats.detector_results += len(batch)
+            self.fusion.expire(vector.timestamp.timestamp())
             self._apply_outcome(self.fusion.ingest(batch), self.alerts, stats, persist=persist)
         stats.features += len(vectors)
         if persist:
@@ -207,6 +209,7 @@ class Pipeline:
                 results = self.detectors.evaluate(vector)
                 result_buffer.extend(results)
                 stats.detector_results += len(results)
+                self.fusion.expire(vector.timestamp.timestamp())
                 self._apply_outcome(self.fusion.ingest(results), alerts, stats, persist=persist)
 
         if persist:

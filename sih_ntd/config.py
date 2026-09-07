@@ -158,6 +158,9 @@ class ApiSettings(BaseModel):
     default_page_size: int = Field(default=50, ge=1, le=1000)
     max_page_size: int = Field(default=500, ge=1, le=5000)
     ws_queue_size: int = Field(default=256, ge=1)
+    # Optional bearer/X-API-key token for mutating management routes. When unset,
+    # those routes are allowed only while the API is bound to loopback.
+    admin_token: str | None = Field(default=None, min_length=16, max_length=4096)
     # Prototype default binds to loopback only. Anything wider needs an auth
     # layer first -- see docs/SECURITY_MODEL.md.
     allow_replay_trigger: bool = True

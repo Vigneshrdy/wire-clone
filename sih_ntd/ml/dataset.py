@@ -33,6 +33,7 @@ from typing import Callable, Iterable, Sequence
 
 from ..config import Settings, get_settings
 from ..features.stats import DNS_LEXICAL_FEATURES, dns_lexical_features
+from ..ml.registry import validate_registry_component
 from ..schemas import FEATURE_SCHEMA_VERSION, DatasetMetadata, FeedbackLabel
 from ..store import Store
 
@@ -442,7 +443,8 @@ def build_feedback_dataset(
 
 def save_dataset(dataset: Dataset, root: Path | str | None = None) -> Path:
     """Persist a dataset next to the model registry so a run is reproducible."""
-    root = Path(root or get_settings().registry.root) / "datasets" / dataset.metadata.dataset_id
+    dataset_id = validate_registry_component(dataset.metadata.dataset_id, "dataset_id")
+    root = Path(root or get_settings().registry.root) / "datasets" / dataset_id
     root.mkdir(parents=True, exist_ok=True)
     splits = [("train", dataset.train), ("validation", dataset.validation), ("test", dataset.test)]
     if dataset.unseen_family is not None:

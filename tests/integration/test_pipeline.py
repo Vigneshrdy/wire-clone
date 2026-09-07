@@ -67,6 +67,23 @@ def test_replay_is_idempotent(pipeline):
     assert pipeline.store.health()["counts"]["events"] == first
 
 
+def test_duplicate_delivery_after_worker_restart_does_not_duplicate_alerts(settings, store):
+    from sih_ntd.pipeline import Pipeline
+
+    events = syn_flood_events(3000)
+    Pipeline(settings, store=store, publish_alerts=False).handle_events(events)
+    first_alerts = store.count_alerts()
+    first_ids = [alert.alert_id for alert in store.query_alerts(limit=500)]
+
+    # Simulates Redis redelivery after a crash after persist but before ACK: a new
+    # process has empty in-memory fusion state but sees the same deterministic event
+    # batch again.
+    Pipeline(settings, store=store, publish_alerts=False).handle_events(events)
+
+    assert store.count_alerts() == first_alerts
+    assert [alert.alert_id for alert in store.query_alerts(limit=500)] == first_ids
+
+
 def test_a_failing_detector_does_not_stop_the_others(pipeline, monkeypatch):
     """Isolation boundary: one broken detector must not silence the mesh."""
     from sih_ntd.metrics import DETECTOR_ERRORS, reset

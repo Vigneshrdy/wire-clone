@@ -37,10 +37,34 @@ log = get_logger(__name__)
 #: Zeek scripts that produce the logs the reader needs. json-streaming-logs gives
 #: one JSON object per line, which is what ZeekLogReader parses.
 ZEEK_ARGS = ("LogAscii::use_json=T",)
+PCAP_SUFFIXES = {".pcap", ".pcapng"}
 
 
 def zeek_available(binary: str = "zeek") -> bool:
     return shutil.which(binary) is not None
+
+
+def validate_pcap_path(pcap_path: str | Path, settings: Settings) -> Path:
+    """Resolve a capture path inside the configured PCAP directory.
+
+    API callers can provide this value, so the replay service must not become an
+    arbitrary local-file reader. Relative paths are interpreted under
+    ``settings.sensor.pcap_dir``; absolute paths must still resolve inside it.
+    """
+    base = settings.sensor.pcap_dir.resolve()
+    candidate = Path(pcap_path)
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve()
+    if resolved.suffix.lower() not in PCAP_SUFFIXES:
+        raise ConfigError("capture file must have .pcap or .pcapng extension")
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise ConfigError("capture path must stay inside configured PCAP directory") from exc
+    if not resolved.is_file():
+        raise ConfigError(f"capture file not found: {resolved}")
+    return resolved
 
 
 def replay_synthetic(
@@ -120,7 +144,7 @@ def replay_pcap(
 ) -> dict[str, Any]:
     """PCAP -> Zeek -> normalized events -> pipeline (or Redis)."""
     settings = settings or get_settings()
-    pcap = Path(pcap_path)
+    pcap = validate_pcap_path(pcap_path, settings)
     workdir = Path(tempfile.mkdtemp(prefix="sih-zeek-"))
     try:
         logs = run_zeek(pcap, workdir, settings.replay.zeek_binary)

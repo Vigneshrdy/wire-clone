@@ -29,6 +29,7 @@ detector contributions. Severity is computed separately -- see :func:`score_seve
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 
 from .config import Settings, get_settings
@@ -44,6 +45,7 @@ from .schemas import (
     Severity,
     ThreatClass,
 )
+from .windows import LruStateMap
 
 _SEVERITY_LADDER = [
     Severity.INFO, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL
@@ -130,8 +132,9 @@ class ThreatFusion:
         self.settings = settings or get_settings()
         self.config = self.settings.fusion
         self.pipeline_run_id = pipeline_run_id
-        self._dedup: dict[tuple[str, str, str], _DedupEntry] = {}
-        self._subjects: dict[str, _Subject] = {}
+        capacity = self.settings.windows.max_tracked_entities
+        self._dedup: LruStateMap = LruStateMap(capacity)
+        self._subjects: LruStateMap = LruStateMap(capacity)
 
     # --- subject keying ---------------------------------------------------
     #: Subject selection lives in :func:`sih_ntd.evidence.subject_of` so alert
@@ -151,8 +154,12 @@ class ThreatFusion:
     def _fuse_one(self, result: DetectorResult, outcome: FusionOutcome) -> None:
         ts = result.timestamp.timestamp()
         subject_id = self.subject_of(result)
-        subject = self._subjects.setdefault(subject_id, _Subject(first_seen=ts))
+        subject = self._subjects.touch(subject_id, lambda: _Subject(first_seen=ts))
         subject.prune(ts - self.config.correlation_window_seconds)
+        if subject.last_seen and ts - subject.last_seen > self.config.incident_idle_seconds:
+            subject.incident_id = None
+            subject.alert_ids = []
+            subject.first_seen = ts
 
         corroborating = [
             r
@@ -191,6 +198,7 @@ class ThreatFusion:
 
         severity = score_severity(result.threat_class, result.severity_hint, distinct, confidence)
         alert = Alert(
+            alert_id=self._alert_id(result, ts),
             timestamp=ts,
             first_seen=ts,
             last_seen=ts,
@@ -215,8 +223,11 @@ class ThreatFusion:
             lineage=build_lineage(result, corroborating, self.pipeline_run_id),
             contributing_detectors=sorted({r.detector_name for r in corroborating}),
         )
-        self._dedup[key] = _DedupEntry(
-            alert_id=alert.alert_id, first_seen=ts, last_seen=ts, count=1, event_count=1
+        self._dedup.touch(
+            key,
+            lambda: _DedupEntry(
+                alert_id=alert.alert_id, first_seen=ts, last_seen=ts, count=1, event_count=1
+            ),
         )
         subject.alert_ids.append(alert.alert_id)
         ALERTS_TOTAL.inc(threat_class=str(alert.threat_class), severity=str(alert.severity))
@@ -226,6 +237,13 @@ class ThreatFusion:
             alert = alert.model_copy(update={"incident_id": incident.incident_id})
             outcome.incidents.append(incident)
         outcome.alerts.append(alert)
+
+    def _alert_id(self, result: DetectorResult, ts: float) -> str:
+        bucket = int(ts // self.config.dedup_window_seconds)
+        material = "|".join(
+            [result.detector_name, str(result.threat_class), result.entity_id, str(bucket)]
+        )
+        return hashlib.sha256(material.encode()).hexdigest()[:32]
 
     def _update_incident(
         self, subject_id: str, subject: _Subject, alert: Alert, ts: float
@@ -238,8 +256,6 @@ class ThreatFusion:
         classes = sorted({str(r.threat_class) for r in subject.results})
         if len(classes) < 2:
             return None
-        if subject.incident_id is None or ts - subject.last_seen > self.config.incident_idle_seconds:
-            subject.incident_id = None
         primary = max(
             subject.results,
             key=lambda r: (SEVERITY_ORDER[r.severity_hint], r.confidence),
@@ -272,12 +288,22 @@ class ThreatFusion:
     def expire(self, now: float) -> None:
         """Drop state for subjects and dedup keys that have gone quiet."""
         dedup_cutoff = now - self.config.dedup_window_seconds
-        self._dedup = {k: v for k, v in self._dedup.items() if v.last_seen >= dedup_cutoff}
+        retained_dedup = LruStateMap(self.settings.windows.max_tracked_entities)
+        for key, value in self._dedup.items():
+            if value.last_seen >= dedup_cutoff:
+                retained_dedup[key] = value
+        self._dedup = retained_dedup
         subject_cutoff = now - self.config.incident_idle_seconds
-        self._subjects = {
-            k: v for k, v in self._subjects.items() if v.last_seen >= subject_cutoff
-        }
+        retained_subjects = LruStateMap(self.settings.windows.max_tracked_entities)
+        for key, value in self._subjects.items():
+            if value.last_seen >= subject_cutoff:
+                retained_subjects[key] = value
+        self._subjects = retained_subjects
 
     @property
     def tracked_subjects(self) -> int:
         return len(self._subjects)
+
+    @property
+    def tracked_dedup_keys(self) -> int:
+        return len(self._dedup)

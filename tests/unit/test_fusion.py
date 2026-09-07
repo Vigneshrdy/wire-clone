@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from sih_ntd.fusion import ThreatFusion, score_severity
+from sih_ntd.config import Settings
 from sih_ntd.schemas import (
     ConfidenceBasis,
     DetectorResult,
@@ -125,3 +126,31 @@ def test_expire_releases_state(fusion, settings):
     assert fusion.tracked_subjects == 1
     fusion.expire(T0 + settings.fusion.incident_idle_seconds + 10)
     assert fusion.tracked_subjects == 0
+
+
+def test_fusion_state_is_lru_bounded_under_high_cardinality_results():
+    bounded = ThreatFusion(Settings(windows={"max_tracked_entities": 100}))
+    for index in range(150):
+        bounded.ingest([
+            result(
+                ts=T0 + index,
+                entity=f"10.0.0.{index}",
+                dst=f"10.0.0.{index}",
+            )
+        ])
+    assert bounded.tracked_subjects == 100
+    assert bounded.tracked_dedup_keys == 100
+
+
+def test_fusion_resets_incident_group_after_idle_gap(settings):
+    fusion = ThreatFusion(settings)
+    fusion.ingest([result("dga", ThreatClass.DGA, T0, kind=EntityKind.HOST, entity="10.0.0.5")])
+    first = fusion.ingest([
+        result("c2", ThreatClass.C2_BEACON, T0 + 1, kind=EntityKind.HOST, entity="10.0.0.5")
+    ]).incidents[0]
+    later = T0 + settings.fusion.incident_idle_seconds + 10
+    fusion.ingest([result("dga", ThreatClass.DGA, later, kind=EntityKind.HOST, entity="10.0.0.5")])
+    second = fusion.ingest([
+        result("c2", ThreatClass.C2_BEACON, later + 1, kind=EntityKind.HOST, entity="10.0.0.5")
+    ]).incidents[0]
+    assert second.incident_id != first.incident_id

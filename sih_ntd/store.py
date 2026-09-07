@@ -280,34 +280,33 @@ class Store:
         alerts = list(alerts)
         if not alerts:
             return 0
-        rows = [
-            (
-                a.alert_id, a.schema_version, a.timestamp.timestamp(),
-                a.first_seen.timestamp(), a.last_seen.timestamp(), str(a.threat_class),
-                a.confidence, str(a.confidence_basis), str(a.severity), str(a.status),
-                a.src_ip, a.dst_ip, str(a.entity_kind), a.entity_id, a.detector_name,
-                a.detector_version, str(a.technique), a.model_version,
-                a.feature_schema_version, a.correlation_id, a.incident_id,
-                a.event_count, a.dedup_count,
-                a.evidence.model_dump_json(), a.lineage.model_dump_json(),
-                _json(a.contributing_detectors),
-            )
-            for a in alerts
-        ]
+        inserted = 0
         with self._tx() as conn:
-            conn.executemany(
-                "INSERT OR REPLACE INTO alerts VALUES (" + ",".join("?" * 26) + ")", rows
-            )
-            conn.executemany(
-                "INSERT INTO alert_events VALUES (?,?,?,?)",
-                [
+            for a in alerts:
+                cursor = conn.execute(
+                    "INSERT OR IGNORE INTO alerts VALUES (" + ",".join("?" * 26) + ")",
+                    (
+                        a.alert_id, a.schema_version, a.timestamp.timestamp(),
+                        a.first_seen.timestamp(), a.last_seen.timestamp(), str(a.threat_class),
+                        a.confidence, str(a.confidence_basis), str(a.severity), str(a.status),
+                        a.src_ip, a.dst_ip, str(a.entity_kind), a.entity_id, a.detector_name,
+                        a.detector_version, str(a.technique), a.model_version,
+                        a.feature_schema_version, a.correlation_id, a.incident_id,
+                        a.event_count, a.dedup_count,
+                        a.evidence.model_dump_json(), a.lineage.model_dump_json(),
+                        _json(a.contributing_detectors),
+                    ),
+                )
+                if not cursor.rowcount:
+                    continue
+                inserted += 1
+                conn.execute(
+                    "INSERT INTO alert_events VALUES (?,?,?,?)",
                     (a.timestamp.timestamp(), a.alert_id, "CREATED",
                      _json({"threat_class": str(a.threat_class), "severity": str(a.severity),
-                            "confidence": a.confidence}))
-                    for a in alerts
-                ],
-            )
-        return len(rows)
+                             "confidence": a.confidence}))
+                )
+        return inserted
 
     def touch_alert(self, alert_id: str, last_seen: float, dedup_count: int, event_count: int) -> None:
         """Advance a suppressed duplicate's counters, keeping the audit trail."""
